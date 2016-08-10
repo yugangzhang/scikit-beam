@@ -444,12 +444,12 @@ def circular_average(image, calibrated_center, threshold=0, nx=None,
 
     if mask is not None:
         mask = mask.astype(bool)
-        binr = radial_val[mask]
-        image_mask = np.array(image)[mask]
+        radial_val = radial_val[mask]
+        image = np.array(image)[mask]
 
-    binr_ = binr/(np.sqrt(pixel_size[1]*pixel_size[0]))
+    binr_ = radial_val/(np.sqrt(pixel_size[1]*pixel_size[0]))
     bin_edges, sums, counts = utils.bin_1D(binr_,
-                                           image_mask,
+                                           image,
                                            nx=nx,
                                            min_x=min_x,
                                            max_x=max_x)
