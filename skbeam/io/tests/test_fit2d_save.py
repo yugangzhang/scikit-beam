@@ -1,10 +1,6 @@
-# -*- coding: utf-8 -*-
 # ######################################################################
 # Copyright (c) 2014, Brookhaven Science Associates, Brookhaven        #
 # National Laboratory. All rights reserved.                            #
-#                                                                      #
-# @author: Li Li (lili@bnl.gov)                                        #
-# created on 08/16/2014                                                #
 #                                                                      #
 # Redistribution and use in source and binary forms, with or without   #
 # modification, are permitted provided that the following conditions   #
@@ -36,9 +32,23 @@
 # IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE   #
 # POSSIBILITY OF SUCH DAMAGE.                                          #
 ########################################################################
-from .basic import BasicElement
-from .xrs import calibration_standards
-from .xrf import XrfElement, emission_line_search
 
-import logging
-logger = logging.getLogger(__name__)
+"""
+    This module is for test output.py saving integrated powder
+    x-ray diffraction intensities into  different file formats.
+    (Output into different file formats, .chi, .dat, .xye, gsas)
+    Added a test to check the GSAS file reader and file writer
+"""
+from __future__ import absolute_import, division, print_function
+import os
+import numpy as np
+from skbeam.io.fit2d_save import fit2d_save
+
+
+def test_save_output_for_smoke():
+    filename = "function_values"
+    msk = np.ones((2048, 2048))
+
+    fit2d_save(msk, filename, dir_path=None)
+
+    os.remove("function_values.msk")

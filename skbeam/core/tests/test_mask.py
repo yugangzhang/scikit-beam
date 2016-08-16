@@ -1,10 +1,6 @@
-# -*- coding: utf-8 -*-
 # ######################################################################
 # Copyright (c) 2014, Brookhaven Science Associates, Brookhaven        #
 # National Laboratory. All rights reserved.                            #
-#                                                                      #
-# @author: Li Li (lili@bnl.gov)                                        #
-# created on 08/16/2014                                                #
 #                                                                      #
 # Redistribution and use in source and binary forms, with or without   #
 # modification, are permitted provided that the following conditions   #
@@ -36,9 +32,55 @@
 # IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE   #
 # POSSIBILITY OF SUCH DAMAGE.                                          #
 ########################################################################
-from .basic import BasicElement
-from .xrs import calibration_standards
-from .xrf import XrfElement, emission_line_search
-
+from __future__ import absolute_import, division, print_function
 import logging
+
+import numpy as np
+from numpy.testing import assert_array_equal
+
+import skbeam.core.mask as mask
+
 logger = logging.getLogger(__name__)
+
+
+def test_threshold_mask():
+    xdim = 10
+    ydim = 10
+    stack_size = 10
+    img_stack = np.random.randint(1, 3, (stack_size, xdim, ydim))
+
+    img_stack[0][0, 1] = 100
+    img_stack[0][9, 1] = 98
+    img_stack[6][8, 8] = 75
+    img_stack[7][6, 6] = 80
+
+    th = mask.threshold_mask(img_stack, 75)
+
+    for final in th:
+        pass
+
+    y = np.ones_like(img_stack[0])
+    y[0, 1] = 0
+    y[9, 1] = 0
+    y[8, 8] = 0
+    y[6, 6] = 0
+
+    assert_array_equal(final, y)
+
+
+def test_bad_to_nan_gen():
+    xdim = 2
+    ydim = 2
+    stack_size = 5
+    img_stack = np.random.randint(1, 3, (stack_size, xdim, ydim))
+
+    bad_list = [1, 3]
+
+    img = mask.bad_to_nan_gen(img_stack, bad_list)
+    y = []
+    for im in img:
+        y.append(im)
+
+    assert np.isnan(np.asarray(y)[1]).all()
+    assert np.isnan(np.asarray(y)[3]).all()
+    assert not np.isnan(np.asarray(y)[4]).all()

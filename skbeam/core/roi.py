@@ -42,6 +42,7 @@ from __future__ import absolute_import, division, print_function
 
 import collections
 import scipy.ndimage.measurements as ndim
+from skimage.draw import line
 import numpy as np
 from . import utils
 import logging
@@ -96,7 +97,7 @@ def rectangles(coords, shape):
 
 def rings(edges, center, shape):
     """
-    Draw annual (ring-shaped) regions of interest.
+    Draw annual (ring-shaped) shaped regions of interest.
 
     Each ring will be labeled with an integer. Regions outside any ring will
     be filled with zeros.
@@ -106,11 +107,9 @@ def rings(edges, center, shape):
     edges: list
         giving the inner and outer radius of each ring
         e.g., [(1, 2), (11, 12), (21, 22)]
-
-    center : tuple
+    center: tuple
         point in image where r=0; may be a float giving subpixel precision.
         Order is (rr, cc).
-
     shape: tuple
         Image shape which is used to determine the maximum extent of output
         pixel coordinates. Order is (rr, cc).
@@ -131,15 +130,11 @@ def rings(edges, center, shape):
                          "giving inner and outer radii of each ring from "
                          "r=0 outward")
     r_coord = utils.radial_grid(center, shape).ravel()
-    label_array = np.digitize(r_coord, edges, right=False)
-    # Even elements of label_array are in the space between rings.
-    label_array = (np.where(label_array % 2 != 0, label_array, 0) + 1) // 2
-    return label_array.reshape(shape)
+    return _make_roi(r_coord, edges, shape)
 
 
 def ring_edges(inner_radius, width, spacing=0, num_rings=None):
-    """
-    Calculate the inner and outer radius of a set of rings.
+    """ Calculate the inner and outer radius of a set of rings.
 
     The number of rings, their widths, and any spacing between rings can be
     specified. They can be uniform or varied.
@@ -381,6 +376,7 @@ def mean_intensity(images, labeled_array, index=None):
             len(mean_intensity[0]) == len(images)
     index : list
         The labels for each element of the `mean_intensity` list
+
     """
     if labeled_array.shape != images[0].shape[0:]:
         raise ValueError(
@@ -403,10 +399,11 @@ def mean_intensity(images, labeled_array, index=None):
     return mean_intensity, index
 
 
-def circular_average(image, calibrated_center, threshold=0, nx=100,
-                     pixel_size=(1, 1),  min_x=None, max_x=None):
+def circular_average(image, calibrated_center, threshold=0, nx=None,
+                     pixel_size=(1, 1),  min_x=None, max_x=None, mask=None):
     """Circular average of the the image data
     The circular average is also known as the radial integration
+
     Parameters
     ----------
     image : array
@@ -428,22 +425,36 @@ def circular_average(image, calibrated_center, threshold=0, nx=100,
         Left edge of first bin defaults to minimum value of x
     max_x : float, optional number of pixels
         Right edge of last bin defaults to maximum value of x
+
     Returns
     -------
     bin_centers : array
         The center of each bin in R. shape is (nx, )
     ring_averages : array
         Radial average of the image. shape is (nx, ).
+
+    See Also
+    --------
+    bad_to_nan_gen : convert bad pixels in an image to np.nan
+    threshold_mask : return a mask whose values are zero if above a
+                    a certain threshold
+
     """
     radial_val = utils.radial_grid(calibrated_center, image.shape, pixel_size)
 
-    bin_edges, sums, counts = utils.bin_1D(np.ravel(radial_val),
-                                           np.ravel(image), nx,
+    if mask is not None:
+        mask = mask.astype(bool)
+        radial_val = radial_val[mask]
+        image = np.array(image)[mask]
+
+    binr_ = radial_val/(np.sqrt(pixel_size[1]*pixel_size[0]))
+    bin_edges, sums, counts = utils.bin_1D(binr_,
+                                           image,
+                                           nx=nx,
                                            min_x=min_x,
                                            max_x=max_x)
     th_mask = counts > threshold
     ring_averages = sums[th_mask] / counts[th_mask]
-
     bin_centers = utils.bin_edges_to_centers(bin_edges)[th_mask]
 
     return bin_centers, ring_averages
@@ -511,3 +522,172 @@ def extract_label_indices(labels):
     label_mask = labels[labels > 0]
 
     return label_mask, pixel_list
+
+
+def _make_roi(coords, edges, shape):
+    """ Helper function to create ring rois and bar rois
+
+    Parameters
+    ----------
+    coords : array
+        shape is image shape
+    edges : list
+        List of tuples of inner (left or top) and outer (right or bottom)
+        edges of each roi.
+        e.g., edges=[(1, 2), (11, 12), (21, 22)]
+    shape : tuple
+        Shape of the image in which to create the ROIs
+        e.g., shape=(512, 512)
+
+    Returns
+    -------
+    label_array : array
+        Elements not inside any ROI are zero; elements inside each
+        ROI are 1, 2, 3, corresponding to the order they are
+        specified in `edges`.
+        Has shape=`image shape`
+    """
+    label_array = np.digitize(coords, edges, right=False)
+    # Even elements of label_array are in the space between rings.
+    label_array = (np.where(label_array % 2 != 0, label_array, 0) + 1) // 2
+    return label_array.reshape(shape)
+
+
+def bar(edges, shape, horizontal=True, values=None):
+    """Draw bars defined by `edges` from one edge to the other of `image_shape`
+
+    Bars will be horizontal or vertical depending on the value of `horizontal`
+
+    Parameters
+    ----------
+    edges : list
+        List of tuples of inner (left or top) and outer (right or bottom)
+        edges of each bar.
+        e.g., edges=[(1, 2), (11, 12), (21, 22)]
+    shape : tuple
+        Shape of the image in which to create the ROIs
+        e.g., shape=(512, 512)
+    horizontal : bool, optional
+        True: Make horizontal bars
+        False: Make vertical bars
+        Defaults to True
+    values : array, optional
+        image pixels co-ordinates
+
+    Returns
+    -------
+    label_array : array
+        Elements not inside any ROI are zero; elements inside each
+        ROI are 1, 2, 3, corresponding to the order they are
+        specified in `edges`.
+        Has shape=`image shape`
+
+    Note
+    ----
+    The primary use case is in GISAXS.
+    """
+    edges = np.atleast_2d(np.asarray(edges)).ravel()
+    if not 0 == len(edges) % 2:
+        raise ValueError("edges should have an even number of elements, "
+                         "giving inner, outer edge value for each bar")
+    if not np.all(np.diff(edges) >= 0):
+        raise ValueError("edges are expected to be monotonically increasing, "
+                         "giving inner and outer radii of each bar from "
+                         "r=0 outward")
+    if values is None:
+        values = np.repeat(range(shape[0]), shape[1])
+    if not horizontal:
+        values = np.tile(range(shape[1]), shape[0])
+
+    return _make_roi(values, edges, shape)
+
+
+def box(shape, v_edges, h_edges=None, h_values=None, v_values=None):
+    """Draw box shaped rois when the horizontal and vertical edges
+     are provided.
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the image in which to create the ROIs
+        e.g., shape=(512, 512)
+    v_edges : list
+        giving the inner and outer edges of each vertical bar
+        e.g., [(1, 2), (11, 12), (21, 22)]
+    h_edges : list, optional
+        giving the inner and outer edges of each horizontal bar
+        e.g., [(1, 2), (11, 12), (21, 22)]
+    h_values : array, optional
+        image pixels co-ordinates in horizontal direction
+        shape has to be image shape
+    v_values : array, optional
+        image pixels co-ordinates in vertical direction
+        shape has to be image shape
+
+    Returns
+    -------
+    label_array : array
+        Elements not inside any ROI are zero; elements inside each
+        ROI are 1, 2, 3, corresponding to the order they are specified
+        in edges.
+
+    Note
+    ----
+    To draw boxes according to the image pixels co-ordinates has to provide
+    both h_values and v_values. The primary use case is in GISAXS.
+    e.g., v_values=gisaxs_qy, h_values=gisaxs_qx
+
+    """
+    if h_edges is None:
+        h_edges = v_edges
+
+    if h_values is None and v_values is None:
+        v_values, h_values = np.mgrid[:shape[0], :shape[1]]
+    elif h_values.shape != v_values.shape:
+        raise ValueError("Shape of the h_values array should be equal to"
+                         " shape of the v_values array")
+    for edges in (h_edges, v_edges):
+        edges = np.atleast_2d(np.asarray(edges)).ravel()
+        if not 0 == len(edges) % 2:
+            raise ValueError("edges should have an even number of elements, "
+                             "giving inner, outer edges for each roi")
+    coords = []
+    for h in h_edges:
+        for v in v_edges:
+            coords.append((h[0], v[0], h[1]-h[0], v[1] - v[0]))
+
+    return rectangles(coords, v_values.shape)
+
+
+def lines(end_points, shape):
+    """
+    Parameters
+    ----------
+    end_points : iterable
+        coordinates of the starting point and the ending point of each
+        line: e.g., [(start_x, start_y, end_x, end_y), (x1, y1, x2, y2)]
+    shape : tuple
+        Image shape which is used to determine the maximum extent of output
+        pixel coordinates. Order is (rr, cc).
+
+    Returns
+    -------
+    label_array : array
+        Elements not inside any ROI are zero; elements inside each
+        ROI are 1, 2, 3, corresponding to the order they are specified
+        in coords. Order is (rr, cc).
+
+    """
+    label_array = np.zeros(shape, dtype=np.int64)
+    label = 0
+    for points in end_points:
+        if len(points) != 4:
+            raise ValueError("end points should have four number of"
+                             " elements, giving starting co-ordinates,"
+                             " ending co-ordinates for each line")
+        rr, cc = line(np.max([points[0], 0]), np.max([points[1], 0]),
+                      np.min([points[2], shape[0]-1]),
+                      np.min([points[3], shape[1]-1]))
+        label += 1
+        label_array[rr, cc] = label
+    return label_array
